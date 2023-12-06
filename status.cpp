@@ -5808,7 +5808,7 @@ void status_calc_bl_(struct block_list* bl, enum scb_flag flag, enum e_status_ca
 
 		if (sd->delayed_damage != 0) {
 			if (opt&SCO_FORCE)
-				sd->state.hold_recalc = false; // Clear and move on
+				sd->state.hold_recalc = true; // Clear and move on
 			else {
 				sd->state.hold_recalc = true; // Flag and stop
 				return;
@@ -9237,6 +9237,15 @@ int status_change_start(struct block_list* src, struct block_list* bl,enum sc_ty
 	sd = BL_CAST(BL_PC, bl);
 	vd = status_get_viewdata(bl);
 
+// (^~_~^) Auras Start
+
+	if (sd && sd->aura_data > 0x1000000 && (type == SC_HIDING || type == SC_CLOAKING || type == SC_CHASEWALK))
+	{
+		clif_send_aura(&sd->bl, 0x1000000, AREA);
+	}
+
+// (^~_~^) Auras End
+
 	undead_flag = battle_check_undead(status->race,status->def_ele);
 	// Check for immunities / sc fails
 	switch (type) {
@@ -10287,7 +10296,7 @@ int status_change_start(struct block_list* src, struct block_list* bl,enum sc_ty
 					int i;
 					for( i = 0; i < MAX_DEVOTION; i++ ) {
 						if( sd->devotion[i] && (tsd = map_id2sd(sd->devotion[i])) )
-							status_change_start(src,&tsd->bl, type, 10000, val1, val2, val3, val4, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+							status_change_start(src,&tsd->bl, type, 10000, val1, val2, val3, val4, tick, SCSTART_NOAVOID);
 					}
 				}
 				else if( bl->type == BL_MER && ((TBL_MER*)bl)->devotion_flag && (tsd = ((TBL_MER*)bl)->master) )
@@ -10386,7 +10395,7 @@ int status_change_start(struct block_list* src, struct block_list* bl,enum sc_ty
 					int i;
 					for( i = 0; i < MAX_DEVOTION; i++ ) {
 						if( sd->devotion[i] && (tsd = map_id2sd(sd->devotion[i])) )
-							status_change_start(src,&tsd->bl, type, 10000, val1, val2, 0, 1, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+							status_change_start(src,&tsd->bl, type, 10000, val1, val2, 0, 1, tick, SCSTART_NOAVOID);
 					}
 				}
 				else if( bl->type == BL_MER && ((TBL_MER*)bl)->devotion_flag && (tsd = ((TBL_MER*)bl)->master) )
@@ -10718,7 +10727,7 @@ int status_change_start(struct block_list* src, struct block_list* bl,enum sc_ty
 					if( sd ) {
 						for( i = 0; i < MAX_DEVOTION; i++ ) {
 							if( sd->devotion[i] && (tsd = map_id2sd(sd->devotion[i])) )
-								status_change_start(src,&tsd->bl, type, 10000, val1, val2, 0, 0, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+								status_change_start(src,&tsd->bl, type, 10000, val1, val2, 0, 0, tick, SCSTART_NOAVOID);
 						}
 					}
 					else if( bl->type == BL_MER && ((TBL_MER*)bl)->devotion_flag && (tsd = ((TBL_MER*)bl)->master) )
@@ -10882,7 +10891,8 @@ int status_change_start(struct block_list* src, struct block_list* bl,enum sc_ty
 				while( i >= 0 ) {
 					enum sc_type type2 = types[i];
 					if( d_sc->data[type2] )
-						status_change_start(d_bl, bl, type2, 10000, d_sc->data[type2]->val1, 0, 0, (type2 == SC_REFLECTSHIELD ? 1 : 0), skill_get_time(status_sc2skill(type2),d_sc->data[type2]->val1), (type2 == SC_DEFENDER) ? SCSTART_NOAVOID : SCSTART_NOAVOID|SCSTART_NOICON);
+						//status_change_start(d_bl, bl, type2, 10000, d_sc->data[type2]->val1, 0, 0, (type2 == SC_REFLECTSHIELD ? 1 : 0), skill_get_time(status_sc2skill(type2),d_sc->data[type2]->val1), (type2 == SC_DEFENDER) ? SCSTART_NOAVOID : SCSTART_NOAVOID);
+						status_change_start(d_bl, bl, type2, 10000, d_sc->data[type2]->val1, 0, 0, (type2 == SC_REFLECTSHIELD ? 1 : 0), skill_get_time(status_sc2skill(type2),d_sc->data[type2]->val1), (type2 == SC_DEFENDER) ? SCSTART_NONE : SCSTART_NOAVOID);
 					i--;
 				}
 			}
@@ -13801,6 +13811,15 @@ int status_change_end_(struct block_list* bl, enum sc_type type, int tid, const 
 		opt_flag = 0;
 	}
 
+// (^~_~^) Auras Start
+
+	if (sd && sd->aura_data > 0x1000000 && (type == SC_HIDING || type == SC_CLOAKING || type == SC_CHASEWALK))
+	{
+		clif_send_aura(&sd->bl, sd->aura_data, AREA);
+	}
+
+// (^~_~^) Auras End
+
 	if (calc_flag&SCB_DYE) { // Restore DYE color
 		if (vd && !vd->cloth_color && sce->val4)
 			clif_changelook(bl,LOOK_CLOTHES_COLOR,sce->val4);
@@ -14558,7 +14577,7 @@ TIMER_FUNC(status_change_timer){
 
 	case SC_TROPIC:
 	case SC_CHILLY_AIR:
-	case SC_WILD_STORM:
+	case SC_WILD_STORM:
 	case SC_UPHEAVAL:
 	case SC_HEATER:
 	case SC_COOLER:
