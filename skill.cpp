@@ -816,6 +816,9 @@ bool skill_isNotOk(uint16 skill_id, struct map_session_data *sd)
 
 	if (mapdata->flag[MF_NOSKILL] && skill_id != ALL_EQSWITCH && !sd->skillitem) //Item skills bypass noskill
 		return true;
+		
+	if (skill_id == DC_DONTFORGETME && (map_flag_gvg(mapdata->m) || map_flag_vs(mapdata->m)) && pc_checkskill(sd, skill_id) < 10)
+		return true;
 
 	// Epoque:
 	// This code will compare the player's attack motion value which is influenced by ASPD before
@@ -3345,6 +3348,13 @@ int64 skill_attack (int attack_type, struct block_list* src, struct block_list *
 	if(sd && sc && sc->data[SC_GRAVITATION] && sc->data[SC_GRAVITATION]->val3 == BCT_SELF && skill_id != HW_GRAVITATION && !sd->state.autocast)
 		return 0;
 #endif
+
+	switch (skill_id) {
+	case MO_EXTREMITYFIST:
+		if (!check_distance_bl(src, bl, AREA_SIZE))
+			return 0;
+		break;
+	}
 
 	dmg = battle_calc_attack(attack_type,src,bl,skill_id,skill_lv,flag&0xFFF);
 
@@ -7116,6 +7126,26 @@ int skill_castend_nodamage_id (struct block_list *src, struct block_list *bl, ui
 	case SJ_BOOKOFDIMENSION:
 		clif_skill_nodamage(src,bl,skill_id,skill_lv,
 			sc_start(src,bl,type,100,skill_lv,skill_get_time(skill_id,skill_lv)));
+			
+		if (sd) {
+			if (skill_id == LK_CONCENTRATION) {
+				e_skill skills[] = { KN_TWOHANDQUICKEN, LK_PARRYING, SM_ENDURE };
+				for (int s = 0; s < 3; ++s) {
+					uint16 lv = pc_checkskill(sd, skills[s]);
+					if (lv == 0)
+						continue;
+					unit_skilluse_id(src, src->id, skills[s], lv);
+				}
+			} else if (skill_id == WS_OVERTHRUSTMAX) {
+				e_skill skills[] = { BS_ADRENALINE, BS_WEAPONPERFECT, BS_MAXIMIZE, MC_LOUD };
+				for (int s = 0; s < 4; ++s) {
+					uint16 lv = pc_checkskill(sd, skills[s]);
+					if (lv == 0)
+						continue;
+					unit_skilluse_id(src, src->id, skills[s], lv);
+				}
+			}
+		}
 		break;
 
 	case SJ_GRAVITYCONTROL: {
@@ -8451,6 +8481,9 @@ int skill_castend_nodamage_id (struct block_list *src, struct block_list *bl, ui
 			//Remove bonus_script by Dispell
 			if (dstsd)
 				pc_bonus_script_clear(dstsd,BSF_REM_ON_DISPELL);
+			
+			if (sd)
+				sd->skill_dispell_block_timer = gettick() + 4000;
 
 			if(!tsc || !tsc->count)
 				break;
@@ -8541,13 +8574,13 @@ int skill_castend_nodamage_id (struct block_list *src, struct block_list *bl, ui
 					case SC_LHZ_DUN_N1:		case SC_LHZ_DUN_N2:			case SC_LHZ_DUN_N3:			case SC_LHZ_DUN_N4:
 					case SC_REUSE_LIMIT_LUXANIMA:	case SC_LUXANIMA:	case SC_SOULENERGY:
 						continue;
-					case SC_WHISTLE:
-					case SC_ASSNCROS:
-					case SC_POEMBRAGI:
-					case SC_APPLEIDUN:
-					case SC_HUMMING:
-					case SC_FORTUNE:
-					case SC_SERVICE4U:
+//					case SC_WHISTLE:
+//					case SC_ASSNCROS:
+//					case SC_POEMBRAGI:
+//					case SC_APPLEIDUN:
+//					case SC_HUMMING:
+//					case SC_FORTUNE:
+//					case SC_SERVICE4U:
 						if (!battle_config.dispel_song || tsc->data[i]->val4 == 0)
 							continue; //If in song area don't end it, even if config enabled
 						break;
@@ -8569,6 +8602,11 @@ int skill_castend_nodamage_id (struct block_list *src, struct block_list *bl, ui
 		break;
 
 	case TF_BACKSLIDING: //This is the correct implementation as per packet logging information. [Skotlex]
+		if ( sd && ( ( sd->sc.data[SC_ANKLE]) || ( sd->sc.data[SC_SPIDERWEB]) ) )
+		{
+			clif_skill_fail(sd, skill_id, USESKILL_FAIL_LEVEL, 0);
+			return 0;
+		}
 		skill_blown(src,bl,skill_get_blewcount(skill_id,skill_lv),unit_getdir(bl),(enum e_skill_blown)(BLOWN_IGNORE_NO_KNOCKBACK
 #ifdef RENEWAL
 			|BLOWN_DONT_SEND_PACKET
@@ -8584,6 +8622,11 @@ int skill_castend_nodamage_id (struct block_list *src, struct block_list *bl, ui
 
 	case TK_HIGHJUMP:
 		{
+			if( sd && ( ( sd->sc.data[SC_ANKLE]) || ( sd->sc.data[SC_SPIDERWEB]) ) )
+			{
+				clif_skill_fail(sd,skill_id,USESKILL_FAIL_LEVEL,0);
+				break;
+			}
 			int x,y, dir = unit_getdir(src);
 			struct map_data *mapdata = &map[src->m];
 
@@ -11668,6 +11711,20 @@ static int8 skill_castend_id_check(struct block_list *src, struct block_list *ta
 	if (src != target && (status_bl_has_mode(target,MD_SKILL_IMMUNE) || (status_get_class(target) == MOBID_EMPERIUM && !skill->inf2[INF2_TARGETEMPERIUM])) && skill_get_casttype(skill_id) == CAST_NODAMAGE)
 		return USESKILL_FAIL_MAX; // Don't show a skill fail message (NoDamage type doesn't consume requirements)
 
+	if (map_flag_gvg(src->m) && src->type == BL_PC && target->type == BL_PC && skill_id == SA_DISPELL) {
+		auto sd = (TBL_PC *)src;
+		auto class_ = status_get_class(target);
+		switch (class_) {
+			case JOB_CRUSADER:
+			case JOB_PALADIN:
+			case JOB_PALADIN2:
+			case JOB_HUNTER:
+			case JOB_SNIPER:
+				if (sd->skill_dispell_block_timer > gettick())
+					return USESKILL_FAIL_TOTARGET;
+		}
+	}
+	
 	switch (skill_id) {
 		case AL_HEAL:
 		case AL_INCAGI:
@@ -13255,6 +13312,13 @@ static int skill_dance_overlap_sub(struct block_list* bl, va_list ap)
 //When 1, this unit has been positioned, so start the cancel effect.
 int skill_dance_overlap(struct skill_unit* unit, int flag)
 {
+
+// (^~_~^) LGP Start
+
+	return 0;
+
+// (^~_~^) LGP End
+
 	if (!unit || !unit->group || !(unit->group->state.song_dance&0x1))
 		return 0;
 	if (!flag && !(unit->val2&(1 << UF_ENSEMBLE)))
@@ -13422,8 +13486,8 @@ struct skill_unit_group *skill_unitsetting(struct block_list *src, uint16 skill_
 		flag = 0; // Flag should not influence anything else for these skills
 		break;
 	case WZ_FIREPILLAR:
-		if( map_getcell(src->m, x, y, CELL_CHKLANDPROTECTOR) )
-			return NULL;
+//		if( map_getcell(src->m, x, y, CELL_CHKLANDPROTECTOR) )
+//			return NULL;
 		if((flag&1)!=0)
 			limit=1000;
 		val1=skill_lv+2;
@@ -13508,25 +13572,49 @@ struct skill_unit_group *skill_unitsetting(struct block_list *src, uint16 skill_
 		if (sd)
 			val1 += pc_checkskill(sd, DC_DANCINGLESSON);
 		break;
-	case BA_POEMBRAGI:
-		val1 = 3 * skill_lv + status->dex / 10; // Casting time reduction
-		//For some reason at level 10 the base delay reduction is 50%.
-		val2 = (skill_lv < 10 ? 3 * skill_lv : 50) + status->int_ / 5; // After-cast delay reduction
-		if (sd) {
-			val1 += pc_checkskill(sd, BA_MUSICALLESSON);
-			val2 += 2 * pc_checkskill(sd, BA_MUSICALLESSON);
-		}
-		break;
+case BA_POEMBRAGI:
+        val1 = 3 * 10 + status->dex / 10; // Casting time reduction
+        //For some reason at level 10 the base delay reduction is 50%.
+        val2 = 50 + status->int_ / 5; // After-cast delay reduction
+        if (sd) {
+            val1 += pc_checkskill(sd, BA_MUSICALLESSON);
+            val2 += 2 * pc_checkskill(sd, BA_MUSICALLESSON);
+        }
+        break;
 	case DC_DONTFORGETME:
+	{
 #ifdef RENEWAL
-		val1 = 3 * skill_lv + status->dex / 15; // ASPD decrease
-		val2 = 2 * skill_lv + status->agi / 20; // Movement speed adjustment.
+		val1 = 3 * 10 + status->dex / 15; // ASPD decrease
+		val2 = 2 * 10 + status->agi / 20; // Movement speed adjustment.
 #else
-		val1 = 5 + 3 * skill_lv + status->dex / 10; // ASPD decrease
-		val2 = 5 + 3 * skill_lv + status->agi / 10; // Movement speed adjustment.
+		bool val1_adjust = false;
+		if (!map_flag_gvg(src->m) && !map_flag_vs(src->m)) {
+			val1 = 5 + 3 * 10 + status->dex / 10; // ASPD decrease
+		} else {
+			if (status->dex >= 205)
+				val1 = 23;
+			else if (status->dex >= 200)
+				val1 = 21;
+			else if (status->dex >= 195)
+				val1 = 18;
+			else if (status->dex >= 190)
+				val1 = 15;
+			else if (status->dex >= 170)
+				val1 = 7;
+			else if (status->dex >= 150)
+				val1 = 5;
+			else if (status->dex >= 140)
+				val1 = 4;
+			else
+				val1 = 3;
+
+			val1_adjust = true;
+		}
+		val2 = 5 + 3 * 10 + status->agi / 10; // Movement speed adjustment.
 #endif		
 		if (sd) {
-			val1 += pc_checkskill(sd, DC_DANCINGLESSON);
+			if (!val1_adjust)
+				val1 += pc_checkskill(sd, DC_DANCINGLESSON);
 #ifdef RENEWAL
 			val2 += pc_checkskill(sd, DC_DANCINGLESSON) / 2;
 #else
@@ -13534,6 +13622,7 @@ struct skill_unit_group *skill_unitsetting(struct block_list *src, uint16 skill_
 #endif
 		}
 		val1 *= 10; //Because 10 is actually 1% aspd
+	}
 		break;
 	case DC_SERVICEFORYOU:
 		val1 = 15 + skill_lv + (status->int_ / 10); // MaxSP percent increase
@@ -16598,6 +16687,12 @@ bool skill_check_condition_castend(struct map_session_data* sd, uint16 skill_id,
 
 	// perform skill-specific checks (and actions)
 	switch( skill_id ) {
+		case MO_EXTREMITYFIST:
+			if (sd->spiritball < 1) {
+				clif_skill_fail(sd, skill_id, USESKILL_FAIL_LEVEL, 0);
+				return false;
+			}
+			break;
 		case PR_BENEDICTIO:
 			skill_check_pc_partner(sd, skill_id, &skill_lv, 1, 1);
 			break;
@@ -18285,7 +18380,7 @@ static int skill_cell_overlap(struct block_list *bl, va_list ap)
 				std::shared_ptr<s_skill_db> skill = skill_db.find(unit->group->skill_id);
 
 				//It deletes everything except traps and barriers
-				if ((!skill->inf2[INF2_ISTRAP] && !skill->inf2[INF2_IGNORELANDPROTECTOR]) || unit->group->skill_id == WZ_FIREPILLAR) {
+				if ((!skill->inf2[INF2_ISTRAP] && !skill->inf2[INF2_IGNORELANDPROTECTOR])) {
 					if (skill->unit_flag[UF_RANGEDSINGLEUNIT]) {
 						if (unit->val2&(1 << UF_RANGEDSINGLEUNIT))
 							skill_delunitgroup(unit->group);
@@ -19783,6 +19878,11 @@ void skill_unit_move_unit_group(struct skill_unit_group *group, int16 m, int16 d
 		switch(m_flag[i]) {
 			case 0:
 			//Cell moves independently, safely move it.
+
+				// (^~_~^) LGP Start
+				clif_skill_delunit(unit1);
+				// (^~_~^) LGP End
+
 				map_foreachinmovearea(clif_outsight, &unit1->bl, AREA_SIZE, dx, dy, BL_PC, &unit1->bl);
 				map_moveblock(&unit1->bl, unit1->bl.x+dx, unit1->bl.y+dy, tick);
 				break;
@@ -19794,6 +19894,11 @@ void skill_unit_move_unit_group(struct skill_unit_group *group, int16 m, int16 d
 					if(m_flag[j] != 2 || !group->unit[j].alive)
 						continue;
 					//Move to where this cell would had moved.
+
+					// (^~_~^) LGP Start
+					clif_skill_delunit(unit1);
+					// (^~_~^) LGP End
+
 					unit2 = &group->unit[j];
 					dx2 = unit2->bl.x + dx - unit1->bl.x;
 					dy2 = unit2->bl.y + dy - unit1->bl.y;
